@@ -50,6 +50,10 @@
       messageOpacity: 0.05,
       animation: "slide",         // slide | fade | pop | up | none
       showBadges: true,
+      emotes7tv: true,            // 7TV-Emotes
+      emotesBttv: true,           // BetterTTV-Emotes
+      emotesFfz: true,            // FrankerFaceZ-Emotes
+      emoteSize: 1.6,             // Emote-Höhe relativ zur Schrift
       maxMessages: 25,
       messageLifetime: 0,         // Sekunden bis Nachricht verschwindet (0 = nie)
       hideCommands: true,
@@ -91,13 +95,36 @@
 
   const cfg = merge(DEFAULTS, window.OVERLAY_CONFIG || {});
   const params = new URLSearchParams(location.search);
-  if (params.get("channel")) cfg.channel = params.get("channel");
-  if (params.get("token")) cfg.accessToken = params.get("token");
-  if (params.get("clientId")) cfg.clientId = params.get("clientId");
-  if (params.get("handcam") === "0") cfg.handcam.enabled = false;
-  if (params.get("chat") === "0") cfg.chat.enabled = false;
   const EDIT = params.has("edit");
   const TEST = params.has("test");
+  const HIDE_CAM = params.get("handcam") === "0";
+  const HIDE_CHAT = params.get("chat") === "0";
+
+  // Ersetzt den Inhalt von cfg (gleiches Objekt, damit der Editor die Referenz behält)
+  function applyConfig(next) {
+    const merged = merge(DEFAULTS, next || {});
+    for (const k of Object.keys(cfg)) delete cfg[k];
+    Object.assign(cfg, merged);
+  }
+
+  // ---- Live-Modus: über server.js ausgeliefert ----
+  const SERVER = location.protocol === "http:" || location.protocol === "https:";
+  const CLIENT_ID = Math.random().toString(36).slice(2);
+  const ls = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let KEY = params.get("key") || (EDIT ? ls.get("overlay-control-key") : "") || "";
+  if (EDIT && params.get("key")) ls.set("overlay-control-key", params.get("key"));
+  const live = { active: false, authFailed: false };
+  const authHeaders = () => (KEY ? { "X-Control-Key": KEY } : {});
+
+  function applyUrlOverrides() {
+    if (params.get("channel")) cfg.channel = params.get("channel");
+    if (params.get("token")) cfg.accessToken = params.get("token");
+    if (params.get("clientId")) cfg.clientId = params.get("clientId");
+  }
+  applyUrlOverrides();
 
   const $ = (id) => document.getElementById(id);
   const chatBox = $("chat-messages");
@@ -124,7 +151,7 @@
 
     // ---- Handcam ----
     const cam = $("handcam");
-    cam.hidden = !h.enabled;
+    cam.hidden = !h.enabled || HIDE_CAM;
     Object.assign(cam.style, {
       left: px(h.x), top: px(h.y), width: px(h.width), height: px(h.height), opacity: h.opacity,
     });
@@ -142,7 +169,7 @@
 
     // ---- Chat ----
     const chat = $("chat");
-    chat.hidden = !c.enabled;
+    chat.hidden = !c.enabled || HIDE_CHAT;
     Object.assign(chat.style, {
       left: px(c.x), top: px(c.y), width: px(c.width), height: px(c.height), opacity: c.opacity,
     });
@@ -150,6 +177,8 @@
     chat.style.setProperty("--chat-blur", px(c.blur));
     chat.style.setProperty("--chat-radius", px(c.radius));
     chat.style.setProperty("--chat-font", px(c.fontSize));
+    chat.style.setProperty("--emote-size", c.emoteSize + "em");
+    if (emoteState.roomId !== undefined) refreshEmotesIfNeeded();
     chat.style.setProperty("--msg-bg", rgba(c.messageBackground, c.messageOpacity));
     chat.className = chat.className.replace(/\banim-\S+/g, "").trim() + " anim-" + c.animation;
     chat.classList.toggle("no-header", !c.showHeader);
@@ -256,6 +285,117 @@
     return msg;
   }
 
+  // ===================================================================
+  // DRITTANBIETER-EMOTES: 7TV, BetterTTV, FrankerFaceZ
+  // ===================================================================
+  const emoteState = { roomId: undefined, loadedFor: "", map: new Map() };
+  const BTTV_ZERO_WIDTH = new Set(["SoSnowy", "IceCold", "SantaHat", "TopHat", "ReinDeer", "CandyCane", "cvMask", "cvHazmat"]);
+
+  const getJson = (url) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
+  const from7tv = (list) => (list || []).map((e) => {
+    const host = e.data && e.data.host;
+    if (!host) return null;
+    const files = host.files || [];
+    const file = files.find((f) => f.name === "2x.webp") || files.find((f) => f.name.endsWith(".webp")) || files[0];
+    return {
+      code: e.name,
+      url: "https:" + host.url + "/" + (file ? file.name : "2x.webp"),
+      zw: !!((e.flags & 1) || (e.data.flags & 256)),
+    };
+  }).filter(Boolean);
+
+  const fromBttv = (list) => (list || []).map((e) => ({
+    code: e.code, url: `https://cdn.betterttv.net/emote/${e.id}/2x.webp`, zw: BTTV_ZERO_WIDTH.has(e.code),
+  }));
+
+  const fromFfz = (list) => (list || []).map((e) => ({
+    code: e.code, url: (e.images && (e.images["2x"] || e.images["1x"])) || `https://cdn.frankerfacez.com/emote/${e.id}/2`, zw: false,
+  }));
+
+  async function loadEmotes(roomId) {
+    if (roomId === null && emoteState.roomId) roomId = emoteState.roomId;
+    const c = cfg.chat;
+    const key = [roomId, c.emotes7tv, c.emotesBttv, c.emotesFfz].join("|");
+    if (emoteState.loadedFor === key) return;
+    emoteState.loadedFor = key;
+    emoteState.roomId = roomId;
+
+    const jobs = [];
+    // Reihenfolge = Priorität (später überschreibt früher): global -> Kanal, FFZ -> BTTV -> 7TV
+    if (c.emotesFfz) {
+      jobs.push(getJson("https://api.betterttv.net/3/cached/frankerfacez/emotes/global").then(fromFfz));
+    } else jobs.push([]);
+    if (c.emotesBttv) {
+      jobs.push(getJson("https://api.betterttv.net/3/cached/emotes/global").then(fromBttv));
+    } else jobs.push([]);
+    if (c.emotes7tv) {
+      jobs.push(getJson("https://7tv.io/v3/emote-sets/global").then((d) => from7tv(d && d.emotes)));
+    } else jobs.push([]);
+    if (roomId) {
+      if (c.emotesFfz) {
+        jobs.push(getJson(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${roomId}`).then(fromFfz));
+      }
+      if (c.emotesBttv) {
+        jobs.push(getJson(`https://api.betterttv.net/3/cached/users/twitch/${roomId}`)
+          .then((d) => fromBttv(d ? [...(d.channelEmotes || []), ...(d.sharedEmotes || [])] : [])));
+      }
+      if (c.emotes7tv) {
+        jobs.push(getJson(`https://7tv.io/v3/users/twitch/${roomId}`)
+          .then((d) => from7tv(d && d.emote_set && d.emote_set.emotes)));
+      }
+    }
+    const results = await Promise.all(jobs);
+    if (emoteState.loadedFor !== key) return; // inzwischen neu geladen
+    const map = new Map();
+    for (const list of results) for (const e of list || []) if (e && e.code) map.set(e.code, e);
+    emoteState.map = map;
+    console.info(`[Overlay] ${map.size} 7TV/BTTV/FFZ-Emotes geladen`);
+  }
+
+  function refreshEmotesIfNeeded() {
+    loadEmotes(emoteState.roomId);
+  }
+  // Neue Kanal-Emotes regelmäßig nachladen
+  setInterval(() => {
+    if (emoteState.roomId === undefined) return;
+    emoteState.loadedFor = "";
+    refreshEmotesIfNeeded();
+  }, 10 * 60 * 1000);
+
+  const emoteImg = (url, alt, cls = "emote") =>
+    `<img class="${cls}" alt="${escapeHtml(alt)}" src="${escapeHtml(url)}">`;
+
+  // Text (ohne Twitch-Emotes) wortweise nach Drittanbieter-Emotes durchsuchen
+  function pushTextParts(parts, text) {
+    for (const tok of text.split(/(\s+)/)) {
+      if (!tok) continue;
+      const e = /\s/.test(tok) ? null : emoteState.map.get(tok);
+      if (e) parts.push({ emote: true, zw: e.zw, html: emoteImg(e.url, e.code) });
+      else parts.push({ emote: false, space: /^\s+$/.test(tok), html: escapeHtml(tok) });
+    }
+  }
+
+  // Zero-Width-Emotes (z. B. 7TV-Overlays) über das vorige Emote legen
+  function joinParts(parts) {
+    const out = [];
+    for (const p of parts) {
+      if (p.emote && p.zw) {
+        let i = out.length - 1;
+        while (i >= 0 && out[i].space) i--;
+        if (i >= 0 && out[i].emote) {
+          out.length = i + 1; // Leerzeichen dazwischen entfernen
+          out[i].layers.push(p.html.replace('class="emote"', 'class="emote zw"'));
+          continue;
+        }
+      }
+      out.push(p.emote ? { ...p, layers: [p.html] } : p);
+    }
+    return out.map((p) => (p.emote
+      ? (p.layers.length > 1 ? `<span class="emote-stack">${p.layers.join("")}</span>` : p.layers[0])
+      : p.html)).join("");
+  }
+
   function renderText(text, emotesTag) {
     const chars = Array.from(text); // Twitch zählt Unicode-Codepoints
     const ranges = [];
@@ -270,15 +410,20 @@
       }
       ranges.sort((x, y) => x.s - y.s);
     }
-    let html = "", i = 0;
+    const parts = [];
+    let i = 0;
     for (const r of ranges) {
       if (r.s < i) continue;
-      html += escapeHtml(chars.slice(i, r.s).join(""));
-      const name = escapeHtml(chars.slice(r.s, r.e + 1).join(""));
-      html += `<img class="emote" alt="${name}" src="https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(r.id)}/default/dark/2.0">`;
+      pushTextParts(parts, chars.slice(i, r.s).join(""));
+      const name = chars.slice(r.s, r.e + 1).join("");
+      parts.push({
+        emote: true, zw: false,
+        html: emoteImg(`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(r.id)}/default/dark/2.0`, name),
+      });
       i = r.e + 1;
     }
-    return html + escapeHtml(chars.slice(i).join(""));
+    pushTextParts(parts, chars.slice(i).join(""));
+    return joinParts(parts);
   }
 
   const badgeLabels = { broadcaster: "★", moderator: "MOD", vip: "VIP", subscriber: "SUB" };
@@ -369,8 +514,11 @@
         const m = parseIrc(line);
         switch (m.command) {
           case "PING": ws.send("PONG :" + (m.params[0] || "tmi.twitch.tv")); break;
-          case "JOIN":
-          case "ROOMSTATE": status.classList.add("online"); break;
+          case "JOIN": status.classList.add("online"); break;
+          case "ROOMSTATE":
+            status.classList.add("online");
+            if (m.tags["room-id"]) loadEmotes(m.tags["room-id"]);
+            break;
           case "PRIVMSG": handlePrivmsg(m); break;
           case "USERNOTICE": {
             const sys = m.tags["system-msg"];
@@ -620,6 +768,7 @@
     { name: "nightowl_99", color: "", badges: "", text: "Die Handcam ist richtig nice 😄" },
     { name: "VIPVanessa", color: "#FF5CF4", badges: "vip/1", text: "GG! Kappa", emotes: "25:4-8" },
     { name: "LaraLurkt", color: "#FFD000", badges: "subscriber/3", text: "Wie heißt der Song gerade?" },
+    { name: "EmoteEnjoyer", color: "#FF7A00", badges: "", text: "EZ Clap SourPls RainTime" },
   ];
   let demoIdx = 0;
   const demoMessage = () => addChatMessage(DEMO[demoIdx++ % DEMO.length]);
@@ -636,27 +785,97 @@
     if (e.key === "f" || e.key === "F") queueAlert("TestFollower" + Math.floor(Math.random() * 1000));
   });
 
+  // ===================================================================
+  // LIVE-STEUERUNG (nur wenn über server.js geöffnet)
+  // ===================================================================
+  function handleAction(a) {
+    switch (a.type) {
+      case "testFollow": queueAlert(a.name || "TestFollower" + Math.floor(Math.random() * 1000)); break;
+      case "demoMessage": demoMessage(); break;
+      case "clearChat": chatBox.innerHTML = ""; break;
+      case "reload": if (!EDIT) location.reload(); break;
+    }
+  }
+
+  async function sendAction(type, extra = {}) {
+    if (!live.active) { handleAction({ type, ...extra }); return; }
+    await fetch("api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ type, ...extra }),
+    });
+  }
+
+  async function pushConfig() {
+    const res = await fetch("api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ config: cfg, source: CLIENT_ID }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "Passwort falsch" : "Fehler " + res.status);
+  }
+
+  function listenLive() {
+    const es = new EventSource("api/events" + (KEY ? "?key=" + encodeURIComponent(KEY) : ""));
+    es.addEventListener("config", (ev) => {
+      const d = JSON.parse(ev.data);
+      if (d.source && d.source === CLIENT_ID) return; // eigene Änderung
+      const before = cfg.channel + "|" + cfg.accessToken;
+      applyConfig(d.config);
+      if (!EDIT) applyUrlOverrides();
+      render();
+      if (window.Overlay.onRemoteConfig) window.Overlay.onRemoteConfig();
+      // Kanal oder Token geändert -> Overlay neu starten
+      if (!EDIT && before !== cfg.channel + "|" + cfg.accessToken) location.reload();
+    });
+    es.addEventListener("action", (ev) => handleAction(JSON.parse(ev.data)));
+    es.onopen = () => { live.connected = true; window.Overlay.onLiveStatus && window.Overlay.onLiveStatus(true); };
+    es.onerror = () => { live.connected = false; window.Overlay.onLiveStatus && window.Overlay.onLiveStatus(false); };
+  }
+
+  async function initLive() {
+    if (!SERVER) return;
+    try {
+      const res = await fetch("api/config", { headers: authHeaders(), cache: "no-store" });
+      if (res.status === 401) { live.authFailed = true; return; }
+      if (!res.ok) return;
+      applyConfig(await res.json());
+      if (!EDIT) applyUrlOverrides();
+      live.active = true;
+      listenLive();
+    } catch { /* kein Server -> normale Datei-Variante */ }
+  }
+
   // API für den Editor
   window.Overlay = {
-    cfg, DEFAULTS, merge, render, queueAlert, demoMessage, setAlertPinned,
+    cfg, DEFAULTS, merge, render, queueAlert, demoMessage, setAlertPinned, applyConfig,
     clearChat: () => { chatBox.innerHTML = ""; },
+    live, sendAction, pushConfig,
+    setKey: (k) => { KEY = k; ls.set("overlay-control-key", k); },
   };
 
-  render();
+  (async () => {
+    await initLive();
+    render();
 
-  if (EDIT) {
-    const css = document.createElement("link");
-    css.rel = "stylesheet";
-    css.href = "editor.css";
-    document.head.appendChild(css);
-    const js = document.createElement("script");
-    js.src = "editor.js";
-    document.body.appendChild(js);
-  } else if (TEST) {
-    DEMO.forEach((_, i) => setTimeout(demoMessage, 400 + i * 700));
-    setTimeout(() => queueAlert("NeuerFollower"), 2500);
-  } else {
-    if (cfg.chat.enabled) connectChat();
-    startFollowAlerts();
-  }
+    if (EDIT) {
+      loadEmotes(null); // globale Emotes für die Vorschau
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "editor.css";
+      document.head.appendChild(css);
+      const js = document.createElement("script");
+      js.src = "editor.js";
+      document.body.appendChild(js);
+    } else if (TEST) {
+      await Promise.race([loadEmotes(null), new Promise((r) => setTimeout(r, 1500))]);
+      DEMO.forEach((_, i) => setTimeout(demoMessage, 400 + i * 700));
+      setTimeout(() => queueAlert("NeuerFollower"), 2500);
+    } else {
+      if (live.authFailed) showError("Overlay: Passwort fehlt – URL mit ?key=DEINPASSWORT öffnen.");
+      loadEmotes(null); // globale Emotes sofort, Kanal-Emotes sobald der Chat verbunden ist
+      if (cfg.chat.enabled && !HIDE_CHAT) connectChat();
+      startFollowAlerts();
+    }
+  })();
 })();

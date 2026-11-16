@@ -152,7 +152,9 @@ html, body {
 .msg .meta { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; vertical-align: middle; }
 .msg .name { font-weight: 800; color: var(--user-color, var(--accent)); }
 .msg.action .text { font-style: italic; color: var(--user-color, var(--text)); }
-.msg .emote { height: 1.5em; vertical-align: middle; margin: -.2em 1px; }
+.msg .emote { height: var(--emote-size, 1.6em); vertical-align: middle; margin: -.25em 1px; }
+.msg .emote-stack { display: inline-grid; vertical-align: middle; margin: -.25em 1px; }
+.msg .emote-stack > .emote { grid-area: 1 / 1; justify-self: center; align-self: center; margin: 0; }
 .chat.no-badges .badge { display: none; }
 .badge {
   display: inline-grid; place-items: center;

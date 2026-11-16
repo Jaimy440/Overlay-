@@ -20,24 +20,25 @@ html.edit-mode #stage {
 /* Elemente bearbeitbar machen */
 html.edit-mode .el { cursor: move; pointer-events: auto; touch-action: none; }
 html.edit-mode .el::before {
-  content: ""; position: absolute; inset: -2px;
-  border: 2px dashed rgba(255,255,255,.35);
+  content: ""; position: absolute; inset: calc(-2px * var(--ui, 1));
+  border: calc(2px * var(--ui, 1)) dashed rgba(255,255,255,.35);
   border-radius: 6px; pointer-events: none; z-index: 20;
 }
-html.edit-mode .el.ed-selected::before { border: 2px solid #ffd000; }
+html.edit-mode .el.ed-selected::before { border-style: solid; border-color: #ffd000; }
 html.edit-mode .el:hover::before { border-color: #ffd000; }
 .ed-tag {
-  position: absolute; left: 0; top: -30px;
-  padding: 3px 10px; border-radius: 6px;
-  font: 600 16px system-ui, sans-serif; color: #111;
+  position: absolute; left: 0; bottom: 100%; margin-bottom: calc(4px * var(--ui, 1));
+  padding: calc(2px * var(--ui, 1)) calc(8px * var(--ui, 1)); border-radius: calc(5px * var(--ui, 1));
+  font: 600 calc(12px * var(--ui, 1)) system-ui, sans-serif; color: #111;
   background: rgba(255,255,255,.7);
   pointer-events: none; white-space: nowrap; z-index: 21;
 }
 .el.ed-selected > .ed-tag { background: #ffd000; }
 .ed-handle {
-  position: absolute; right: -10px; bottom: -10px;
-  width: 22px; height: 22px; border-radius: 50%;
-  background: #ffd000; border: 3px solid #111;
+  --hs: calc(18px * var(--ui, 1));
+  position: absolute; right: calc(var(--hs) / -2); bottom: calc(var(--hs) / -2);
+  width: var(--hs); height: var(--hs); border-radius: 50%;
+  background: #ffd000; border: calc(3px * var(--ui, 1)) solid #111;
   cursor: nwse-resize; z-index: 22;
 }
 html.edit-mode .alert .alert-burst { pointer-events: none; }
@@ -105,9 +106,34 @@ html.edit-mode .alert .alert-burst { pointer-events: none; }
   box-shadow: 0 6px 24px rgba(0,0,0,.4);
 }
 
+.ed-status {
+  padding: 8px 10px; border-radius: 8px; font-weight: 600; font-size: 13px;
+  background: #1d2a22; color: #2bff88; border: 1px solid #245a3a;
+}
+.ed-status.err { background: #2a1d20; color: #ff6b81; border-color: #5a2430; }
+
+/* ---------------- Handy ---------------- */
 @media (max-width: 800px) {
-  #ed-panel { width: 100%; top: 45vh; }
+  #ed-panel { width: 100%; top: 40vh; border-left: 0; border-top: 1px solid #2c2a38; border-radius: 16px 16px 0 0; }
+  .ed-tools { padding: 10px 12px; gap: 6px; grid-template-columns: repeat(3, 1fr); }
+  .ed-tools > .ed-btns { display: contents; }
+  .ed-tools > .ed-status, .ed-tools > .ed-row { grid-column: 1 / -1; }
+  .ed-tools > .ed-row { min-height: 28px; }
+  .ed-status { font-size: 12px; padding: 6px 8px; }
+  .ed-title { display: none; }
+  .ed-btn { padding: 8px 4px; font-size: 12px; line-height: 1.25; }
+  #ed-panel { overflow-y: auto; display: block; }
+  .ed-body { overflow: visible; }
+  .ed-tabs { overflow-x: auto; scrollbar-width: none; position: sticky; top: 0; background: #15141c; z-index: 2; }
+  .ed-tabs button { flex: none; padding: 12px 14px; }
+  .ed-body { padding: 8px 12px 24px; }
+  /* 16px verhindert das automatische Reinzoomen auf iPhones */
+  #ed-panel input[type=text], #ed-panel input[type=password], #ed-panel input[type=number], #ed-panel select { font-size: 16px; }
+  .ed-range input[type=range] { height: 28px; }
+  .ed-switch { width: 24px; height: 24px; }
+  .ed-handle { --hs: calc(30px * var(--ui, 1)); }
+  .ed-hint { display: none; }
 }
 
 /* Chat schneidet überstehende Inhalte ab -> Griff nach innen */
-.chat > .ed-handle { right: 6px; bottom: 6px; }
+.chat > .ed-handle { right: calc(4px * var(--ui, 1)); bottom: calc(4px * var(--ui, 1)); }

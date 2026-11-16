@@ -71,6 +71,14 @@
         ["chat.headerText", "Kopfzeilen-Text", "text"],
         ["chat.fontSize", "Schriftgröße", "range", 10, 40, 1],
         ["chat.showBadges", "Abzeichen zeigen", "bool"],
+      ]],
+      ["Emotes", [
+        ["chat.emotes7tv", "7TV-Emotes", "bool"],
+        ["chat.emotesBttv", "BTTV-Emotes", "bool"],
+        ["chat.emotesFfz", "FFZ-Emotes", "bool"],
+        ["chat.emoteSize", "Emote-Größe", "range", 1, 4, 0.1],
+      ]],
+      ["Filter", [
         ["chat.maxMessages", "Max. Nachrichten", "range", 1, 60, 1],
         ["chat.hideCommands", "!Befehle ausblenden", "bool"],
         ["chat.hideUsers", "Ausgeblendete Nutzer (Komma)", "list"],
@@ -148,8 +156,27 @@
     return el;
   };
 
+  const LIVE = O.live.active;
   let dirty = false;
+  let pushTimer, pushing = false, pushAgain = false;
+  async function push() {
+    if (pushing) { pushAgain = true; return; }
+    pushing = true;
+    try {
+      await O.pushConfig();
+      setStatus(true);
+    } catch (e) {
+      setStatus(false, e.message);
+    }
+    pushing = false;
+    if (pushAgain) { pushAgain = false; push(); }
+  }
   const markDirty = () => {
+    if (LIVE) {
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(push, 80); // Änderungen sofort live ans Overlay schicken
+      return;
+    }
     dirty = true;
     saveBtn.classList.add("dirty");
   };
@@ -238,8 +265,11 @@
     }
     if (tab.id === "twitch") {
       pane.append(h("p", { class: "ed-hint" },
-        "Achtung: Das Token wird mit in config.js gespeichert. Datei nicht öffentlich teilen. " +
-        "Im Editor wird kein Live-Chat verbunden, hier siehst du nur Beispielnachrichten."));
+        LIVE
+          ? "Kanal/Token werden auf dem PC in settings.json gespeichert. Nach einer Änderung startet das Overlay in OBS automatisch neu. " +
+            "Im Editor siehst du Beispielnachrichten, der echte Chat läuft im OBS-Overlay."
+          : "Achtung: Das Token wird mit in config.js gespeichert. Datei nicht öffentlich teilen. " +
+            "Im Editor wird kein Live-Chat verbunden, hier siehst du nur Beispielnachrichten."));
     }
     pane.append(h("button", { type: "button", class: "ed-btn ghost", onclick: () => resetSection(tab) },
       "↺ „" + tab.label + "“ auf Standard zurücksetzen"));
@@ -268,6 +298,14 @@
 
   // Werkzeugleiste
   const saveBtn = h("button", { type: "button", class: "ed-btn primary", onclick: save }, "💾 Speichern");
+  const statusEl = h("div", { class: "ed-status" });
+  function setStatus(ok, msg) {
+    statusEl.className = "ed-status " + (ok ? "ok" : "err");
+    statusEl.textContent = ok ? "● Live verbunden – Änderungen sind sofort im Stream" : "● " + (msg || "Verbindung unterbrochen …");
+  }
+  O.onLiveStatus = (ok) => setStatus(ok);
+  O.onRemoteConfig = () => syncAll(); // Änderungen von einem anderen Gerät übernehmen
+  const act = (type, extra) => O.sendAction(type, extra).catch(() => setStatus(false));
   const pinBox = h("input", { type: "checkbox", class: "ed-switch" });
   pinBox.checked = true;
   pinBox.addEventListener("change", () => O.setAlertPinned(pinBox.checked));
@@ -281,18 +319,22 @@
 
   const tools = h("div", { class: "ed-tools" },
     h("div", { class: "ed-title" }, "Overlay-Editor"),
-    h("div", { class: "ed-btns" },
+    LIVE ? statusEl : h("div", { class: "ed-btns" },
       saveBtn,
       h("button", { type: "button", class: "ed-btn", onclick: copyConfig }, "📋 Kopieren"),
     ),
     h("div", { class: "ed-btns" },
-      h("button", { type: "button", class: "ed-btn", onclick: () => O.queueAlert("TestFollower" + Math.floor(Math.random() * 1000)) }, "▶ Alert testen"),
-      h("button", { type: "button", class: "ed-btn", onclick: O.demoMessage }, "💬 Chat-Nachricht"),
+      h("button", { type: "button", class: "ed-btn", onclick: () => act("testFollow", { name: "TestFollower" + Math.floor(Math.random() * 1000) }) }, "▶ Alert testen"),
+      h("button", { type: "button", class: "ed-btn", onclick: () => act("demoMessage") }, "💬 Chat-Nachricht"),
     ),
     h("div", { class: "ed-btns" },
       h("button", { type: "button", class: "ed-btn ghost", onclick: () => bgInput.click() }, "🖼 Vorschau-Hintergrund"),
-      h("button", { type: "button", class: "ed-btn ghost", onclick: O.clearChat }, "🧹 Chat leeren"),
+      h("button", { type: "button", class: "ed-btn ghost", onclick: () => act("clearChat") }, "🧹 Chat leeren"),
     ),
+    LIVE ? h("div", { class: "ed-btns" },
+      h("button", { type: "button", class: "ed-btn ghost", onclick: () => act("reload") }, "🔄 OBS-Overlay neu laden"),
+      h("button", { type: "button", class: "ed-btn ghost", onclick: copyConfig }, "📋 Als config.js kopieren"),
+    ) : "",
     h("label", { class: "ed-row" }, h("span", { class: "ed-label" }, "Alert-Position immer zeigen"), pinBox),
     h("label", { class: "ed-row" }, h("span", { class: "ed-label" }, "Am 10px-Raster einrasten"), gridBox),
     bgInput,
@@ -308,13 +350,14 @@
   // Vorschau skalieren
   // ---------------------------------------------------------------
   let scale = 1;
-  const PAD = 24;
+  const PAD = window.innerWidth <= 800 ? 10 : 24;
   function fit() {
     const narrow = window.innerWidth <= 800;
     const availW = (narrow ? window.innerWidth : window.innerWidth - panel.offsetWidth) - PAD * 2;
-    const availH = (narrow ? window.innerHeight * 0.45 : window.innerHeight) - PAD * 2;
+    const availH = (narrow ? window.innerHeight * 0.4 : window.innerHeight) - PAD * 2;
     scale = Math.max(0.1, Math.min(availW / 1920, availH / 1080));
     stage.style.transform = `translate(${PAD}px, ${PAD}px) scale(${scale})`;
+    stage.style.setProperty("--ui", (1 / scale).toFixed(3)); // Griffe bleiben gleich groß
   }
   window.addEventListener("resize", fit);
 
@@ -440,6 +483,11 @@
   // ---------------------------------------------------------------
   // Start
   // ---------------------------------------------------------------
+  if (O.live.authFailed) {
+    const pw = prompt("Passwort für die Overlay-Steuerung (steht im Server-Fenster am PC):");
+    if (pw) { O.setKey(pw.trim()); location.reload(); return; }
+  }
+  if (LIVE) setStatus(true);
   for (let i = 0; i < 5; i++) O.demoMessage();
   O.setAlertPinned(true);
   showTab("handcam");
