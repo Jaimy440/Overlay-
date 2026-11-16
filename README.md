@@ -6,6 +6,9 @@ Ein Overlay (1920×1080) mit:
 - **Live-Chat** rechts – mit Emotes, Badges (Streamer/Mod/VIP/Sub), Namensfarben, gelöschte Nachrichten verschwinden automatisch
 - **Follow-Alert** – Animation, Konfetti und Sound, sobald jemand folgt (mit Warteschlange bei mehreren Follows)
 
+Alles ist **frei einstellbar**: Position, Größe, Transparenz, Farben, Schrift und Animationen,
+bequem im **visuellen Editor** mit Maus und Reglern.
+
 Kein Server und keine Installation nötig – nur HTML/CSS/JS.
 
 ## Dateien
@@ -13,8 +16,9 @@ Kein Server und keine Installation nötig – nur HTML/CSS/JS.
 | Datei | Zweck |
 |---|---|
 | `overlay.html` | Die Seite, die in OBS als Browserquelle eingebunden wird |
-| `config.js` | **Deine Einstellungen** (Kanal, Token, Positionen, Farben, Sound) |
+| `config.js` | **Deine Einstellungen** (wird vom Editor geschrieben, kann auch per Hand geändert werden) |
 | `overlay.css` / `overlay.js` | Design und Logik |
+| `editor.js` / `editor.css` | Der visuelle Editor (`overlay.html?edit=1`) |
 
 ## 1. Einrichten
 
@@ -69,20 +73,36 @@ Position und Größe des Rahmens änderst du in `config.js` unter `handcam`.
 
 Nach Änderungen an `config.js`: in OBS bei der Browserquelle „Aktualisieren“ klicken.
 
-## Anpassen (`config.js`)
+## Anpassen mit dem Editor
 
-| Einstellung | Bedeutung |
+1. `overlay.html` in **Chrome oder Edge** öffnen und an die Adresse `?edit=1` anhängen, z. B.
+   `file:///C:/Overlay/overlay.html?edit=1`
+2. In der Vorschau:
+   - **Element ziehen** = verschieben
+   - **gelber Punkt unten rechts** = Größe ändern (mit **Shift** bleibt das Seitenverhältnis gleich)
+   - **Pfeiltasten** = ausgewähltes Element um 1 px verschieben (mit Shift um 10 px)
+   - **Alt** beim Ziehen = Raster ausschalten
+3. Rechts im Panel stellst du alles mit Reglern ein:
+
+| Bereich | Einstellungen |
 |---|---|
-| `handcam.x / y / width / height` | Position & Größe des Handcam-Rahmens |
-| `handcam.label` | Text unter dem Rahmen (`""` = ausblenden) |
-| `chat.width` | Breite des Chats |
-| `chat.messageLifetime` | Sekunden, bis Nachrichten verschwinden (`0` = nie) |
-| `chat.hideCommands` | `!befehle` ausblenden |
-| `chat.hideUsers` | Bots ausblenden |
-| `alert.duration` | Anzeigedauer des Alerts in Sekunden |
-| `alert.soundFile` | eigener Sound, z. B. `"sounds/follow.mp3"` (Datei in den Ordner legen) |
-| `alert.volume` | Lautstärke 0.0–1.0 |
-| `theme.accent / accent2` | Farben |
+| **Handcam** | Position/Größe, Deckkraft, Hintergrundfarbe + Hintergrund-Transparenz, Weichzeichner, Rahmenstärke, Eckenrundung, Leuchten, Eck-Akzente, Rahmen-Animation (Verlauf/Pulsieren/Regenbogen/keine) + Geschwindigkeit, Beschriftung |
+| **Chat** | Position/Größe, Deckkraft, Hintergrund + Transparenz, Weichzeichner, Nachrichten-Hintergrund, Rand, Schatten, Kopfzeile, Schriftgröße, Abzeichen, Einblend-Animation, Ausblenden nach x Sekunden, Bots/Befehle ausblenden |
+| **Alert** | Position/Breite/Skalierung, Deckkraft, Hintergrund + Transparenz, Einblend-Animation (Bounce, Fallen, Links, Rechts, Zoom, Umklappen, Einblenden) + Dauer, Anzeigedauer, Konfetti, Herz-Icon, Texte, Sound/Lautstärke |
+| **Design** | Akzentfarben, Textfarbe, Schriftart |
+| **Twitch** | Kanal, Token |
+
+4. Mit **„▶ Alert testen“** und **„💬 Chat-Nachricht“** siehst du die Animationen sofort.
+   Über **„🖼 Vorschau-Hintergrund“** kannst du einen Screenshot deines Spiels als Hintergrund laden, um alles passend auszurichten.
+5. **„💾 Speichern“** → beim ersten Mal die `config.js` im Overlay-Ordner auswählen und überschreiben.
+   Danach speichert der Button direkt in diese Datei. (In anderen Browsern wird `config.js` heruntergeladen. Ersetze dann die alte Datei damit.)
+6. In OBS bei der Browserquelle auf **„Aktualisieren“** klicken.
+
+> Hinweis Handcam-Hintergrund: Die Kamera liegt in OBS *unter* dem Overlay. Der leicht transparente
+> Hintergrund liegt deshalb wie eine Tönung über der Kamera. Wenn du das nicht willst, stell die
+> „Hintergrund-Deckkraft“ auf 0. Das Gleiche gilt für den Weichzeichner, der das Kamerabild weichzeichnen würde.
+
+Du kannst `config.js` natürlich auch direkt mit einem Texteditor bearbeiten. Alle Werte sind dort kommentiert.
 
 Einzelne Teile kannst du auch per URL abschalten, z. B. `overlay.html?chat=0` (nur Handcam + Alerts) oder `?handcam=0`.
 So kannst du das Overlay z. B. mehrfach mit verschiedenen Teilen in unterschiedlichen Szenen nutzen.

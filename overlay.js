@@ -1,60 +1,188 @@
 (() => {
   "use strict";
 
-  // -------------------------------------------------------------------
-  // Konfiguration (config.js) + optionale URL-Parameter
-  //   overlay.html?channel=xyz&token=abc&test=1
-  // -------------------------------------------------------------------
-  const defaults = {
-    channel: "", accessToken: "", clientId: "",
-    handcam: { enabled: true, x: 40, y: 40, width: 480, height: 270, label: "HANDCAM" },
-    chat: { enabled: true, width: 420, maxMessages: 25, messageLifetime: 0, hideCommands: true, hideUsers: [] },
-    alert: { duration: 6, sound: true, soundFile: "", volume: 0.5, text: "Danke fürs Folgen!" },
-    theme: { accent: "#9146ff", accent2: "#00e5ff" },
+  // ===================================================================
+  // STANDARDWERTE – alles hier ist über config.js / den Editor änderbar
+  // ===================================================================
+  const DEFAULTS = {
+    channel: "",
+    accessToken: "",
+    clientId: "",
+
+    theme: {
+      accent: "#9146ff",
+      accent2: "#00e5ff",
+      text: "#f4f2ff",
+      font: "Rubik",
+    },
+
+    handcam: {
+      enabled: true,
+      x: 40, y: 40, width: 480, height: 270,
+      opacity: 1,                 // Deckkraft des ganzen Elements
+      background: "#000000",      // Hintergrundfarbe im Rahmen
+      backgroundOpacity: 0.2,     // leicht transparent
+      blur: 0,                    // Weichzeichner hinter dem Hintergrund (px)
+      radius: 18,
+      borderWidth: 4,
+      borderAnimation: "flow",    // flow | pulse | rainbow | none
+      animationSpeed: 6,          // Sekunden pro Durchlauf
+      glow: 0.5,                  // 0 – 1
+      corners: true,
+      label: "HANDCAM",
+      labelPosition: "bottom",    // bottom | top | none
+    },
+
+    chat: {
+      enabled: true,
+      x: 1460, y: 40, width: 420, height: 1000,
+      opacity: 1,
+      background: "#0e0c18",
+      backgroundOpacity: 0.72,
+      blur: 6,
+      radius: 18,
+      shadow: true,
+      border: true,
+      showHeader: true,
+      headerText: "CHAT",
+      fontSize: 19,
+      messageBackground: "#ffffff",
+      messageOpacity: 0.05,
+      animation: "slide",         // slide | fade | pop | up | none
+      showBadges: true,
+      maxMessages: 25,
+      messageLifetime: 0,         // Sekunden bis Nachricht verschwindet (0 = nie)
+      hideCommands: true,
+      hideUsers: ["streamelements", "nightbot", "moobot"],
+    },
+
+    alert: {
+      x: 660, y: 120, width: 600,
+      scale: 1,
+      opacity: 1,
+      background: "#181030",
+      backgroundOpacity: 0.95,
+      glow: true,
+      animation: "bounce",        // bounce | drop | left | right | zoom | flip | fade | none
+      animationSpeed: 0.7,        // Sekunden
+      duration: 6,                // Sekunden sichtbar
+      confetti: true,
+      showIcon: true,
+      iconAnimation: true,
+      title: "NEUER FOLLOWER",
+      text: "Danke fürs Folgen!", // {name} wird durch den Namen ersetzt
+      sound: true,
+      soundFile: "",
+      volume: 0.5,
+    },
   };
-  const user = window.OVERLAY_CONFIG || {};
-  const cfg = {
-    ...defaults, ...user,
-    handcam: { ...defaults.handcam, ...user.handcam },
-    chat: { ...defaults.chat, ...user.chat },
-    alert: { ...defaults.alert, ...user.alert },
-    theme: { ...defaults.theme, ...user.theme },
-  };
+
+  // ===================================================================
+  // Konfiguration zusammenführen
+  // ===================================================================
+  const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+  function merge(base, over) {
+    const out = Array.isArray(base) ? [...base] : { ...base };
+    for (const k in over) {
+      out[k] = isObj(base[k]) && isObj(over[k]) ? merge(base[k], over[k]) : over[k];
+    }
+    return out;
+  }
+
+  const cfg = merge(DEFAULTS, window.OVERLAY_CONFIG || {});
   const params = new URLSearchParams(location.search);
   if (params.get("channel")) cfg.channel = params.get("channel");
   if (params.get("token")) cfg.accessToken = params.get("token");
   if (params.get("clientId")) cfg.clientId = params.get("clientId");
   if (params.get("handcam") === "0") cfg.handcam.enabled = false;
   if (params.get("chat") === "0") cfg.chat.enabled = false;
-  cfg.channel = (cfg.channel || "").trim().toLowerCase().replace(/^#/, "");
-  cfg.accessToken = (cfg.accessToken || "").trim().replace(/^oauth:/i, "");
+  const EDIT = params.has("edit");
+  const TEST = params.has("test");
 
   const $ = (id) => document.getElementById(id);
+  const chatBox = $("chat-messages");
+  const alertEl = $("alert");
 
-  // -------------------------------------------------------------------
-  // Layout anwenden
-  // -------------------------------------------------------------------
-  const root = document.documentElement.style;
-  root.setProperty("--accent", cfg.theme.accent);
-  root.setProperty("--accent2", cfg.theme.accent2);
+  function rgba(hex, a) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    const n = m ? parseInt(m[1], 16) : 0;
+    return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const px = (v) => v + "px";
 
-  const cam = $("handcam");
-  if (cfg.handcam.enabled) {
+  // ===================================================================
+  // RENDER – wendet die komplette Konfiguration auf das Overlay an.
+  // Wird beim Start und bei jeder Änderung im Editor aufgerufen.
+  // ===================================================================
+  function render() {
+    const t = cfg.theme, h = cfg.handcam, c = cfg.chat, a = cfg.alert;
+    const root = document.documentElement.style;
+    root.setProperty("--accent", t.accent);
+    root.setProperty("--accent2", t.accent2);
+    root.setProperty("--text", t.text);
+    root.setProperty("--font", `"${t.font}"`);
+
+    // ---- Handcam ----
+    const cam = $("handcam");
+    cam.hidden = !h.enabled;
     Object.assign(cam.style, {
-      left: cfg.handcam.x + "px", top: cfg.handcam.y + "px",
-      width: cfg.handcam.width + "px", height: cfg.handcam.height + "px",
+      left: px(h.x), top: px(h.y), width: px(h.width), height: px(h.height), opacity: h.opacity,
     });
-    $("handcam-label-text").textContent = cfg.handcam.label;
-    if (!cfg.handcam.label) cam.querySelector(".handcam-label").remove();
-  } else cam.remove();
+    cam.style.setProperty("--hc-bg", rgba(h.background, h.backgroundOpacity));
+    cam.style.setProperty("--hc-blur", px(h.blur));
+    cam.style.setProperty("--hc-radius", px(h.radius));
+    cam.style.setProperty("--hc-border", px(h.borderWidth));
+    cam.style.setProperty("--hc-speed", h.animationSpeed + "s");
+    cam.style.setProperty("--hc-glow", h.glow);
+    cam.className = cam.className.replace(/\banim-\S+/g, "").trim() + " anim-" + h.borderAnimation;
+    cam.classList.toggle("no-corners", !h.corners);
+    cam.classList.toggle("label-top", h.labelPosition === "top");
+    cam.classList.toggle("no-label", !h.label || h.labelPosition === "none");
+    $("handcam-label-text").textContent = h.label;
 
-  const chatEl = $("chat");
-  if (cfg.chat.enabled) chatEl.style.width = cfg.chat.width + "px";
-  else chatEl.remove();
+    // ---- Chat ----
+    const chat = $("chat");
+    chat.hidden = !c.enabled;
+    Object.assign(chat.style, {
+      left: px(c.x), top: px(c.y), width: px(c.width), height: px(c.height), opacity: c.opacity,
+    });
+    chat.style.setProperty("--chat-bg", rgba(c.background, c.backgroundOpacity));
+    chat.style.setProperty("--chat-blur", px(c.blur));
+    chat.style.setProperty("--chat-radius", px(c.radius));
+    chat.style.setProperty("--chat-font", px(c.fontSize));
+    chat.style.setProperty("--msg-bg", rgba(c.messageBackground, c.messageOpacity));
+    chat.className = chat.className.replace(/\banim-\S+/g, "").trim() + " anim-" + c.animation;
+    chat.classList.toggle("no-header", !c.showHeader);
+    chat.classList.toggle("no-badges", !c.showBadges);
+    chat.classList.toggle("has-shadow", !!c.shadow);
+    chat.classList.toggle("no-border", !c.border);
+    $("chat-title").textContent = c.headerText;
+    while (chatBox.children.length > c.maxMessages) chatBox.firstElementChild.remove();
+    hideUsers = new Set((Array.isArray(c.hideUsers) ? c.hideUsers : String(c.hideUsers).split(","))
+      .map((u) => u.trim().toLowerCase()).filter(Boolean));
 
-  // -------------------------------------------------------------------
+    // ---- Alert ----
+    Object.assign(alertEl.style, {
+      left: px(a.x), top: px(a.y), width: px(a.width), opacity: a.opacity, scale: String(a.scale),
+    });
+    alertEl.style.setProperty("--alert-bg", rgba(a.background, a.backgroundOpacity));
+    alertEl.style.setProperty("--alert-speed", a.animationSpeed + "s");
+    alertEl.className = alertEl.className.replace(/\banim-\S+/g, "").trim() + " anim-" + a.animation;
+    alertEl.classList.toggle("no-glow", !a.glow);
+    alertEl.classList.toggle("no-icon", !a.showIcon);
+    alertEl.classList.toggle("icon-anim", !!a.iconAnimation);
+    $("alert-title").textContent = a.title;
+    if (alertEl.classList.contains("pinned")) fillAlert("BeispielName");
+  }
+
+  function fillAlert(name) {
+    $("alert-name").textContent = name;
+    $("alert-sub").textContent = cfg.alert.text.replace(/\{name\}/g, name);
+  }
+
+  // ===================================================================
   // Hilfsfunktionen
-  // -------------------------------------------------------------------
+  // ===================================================================
   let debugTimer;
   function showError(msg) {
     console.warn("[Overlay]", msg);
@@ -65,8 +193,8 @@
     debugTimer = setTimeout(() => d.classList.remove("visible"), 15000);
   }
 
-  const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const escapeHtml = (s) => s.replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
   const fallbackColors = ["#FF4A80", "#FF7A00", "#FFD000", "#3DDC84", "#00C8FF", "#8C7CFF", "#FF5CF4", "#00E5B0"];
   function colorFor(name) {
@@ -90,19 +218,17 @@
     return "#" + m[1];
   }
 
-  // -------------------------------------------------------------------
-  // CHAT (Twitch IRC über WebSocket, anonym)
-  // -------------------------------------------------------------------
-  const chatBox = $("chat-messages");
-  const hideUsers = new Set((cfg.chat.hideUsers || []).map((u) => u.toLowerCase()));
+  // ===================================================================
+  // CHAT (Twitch IRC über WebSocket, anonym – kein Login nötig)
+  // ===================================================================
+  let hideUsers = new Set();
 
   function parseTags(raw) {
     const tags = {};
     for (const part of raw.split(";")) {
       const i = part.indexOf("=");
-      const k = part.slice(0, i);
-      const v = part.slice(i + 1).replace(/\\s/g, " ").replace(/\\:/g, ";").replace(/\\\\/g, "\\");
-      tags[k] = v;
+      tags[part.slice(0, i)] = part.slice(i + 1)
+        .replace(/\\s/g, " ").replace(/\\:/g, ";").replace(/\\\\/g, "\\");
     }
     return tags;
   }
@@ -120,12 +246,9 @@
       msg.prefix = rest.slice(1, sp);
       rest = rest.slice(sp + 1);
     }
-    const trailingIdx = rest.indexOf(" :");
+    const ti = rest.indexOf(" :");
     let trailing = null;
-    if (trailingIdx !== -1) {
-      trailing = rest.slice(trailingIdx + 2);
-      rest = rest.slice(0, trailingIdx);
-    }
+    if (ti !== -1) { trailing = rest.slice(ti + 2); rest = rest.slice(0, ti); }
     const parts = rest.split(" ").filter(Boolean);
     msg.command = parts.shift() || "";
     msg.params = parts;
@@ -133,9 +256,8 @@
     return msg;
   }
 
-  // Text + Emotes -> HTML
   function renderText(text, emotesTag) {
-    const chars = Array.from(text); // Twitch-Indizes zählen Unicode-Codepoints
+    const chars = Array.from(text); // Twitch zählt Unicode-Codepoints
     const ranges = [];
     if (emotesTag) {
       for (const e of emotesTag.split("/")) {
@@ -146,7 +268,7 @@
           ranges.push({ id, s, e: en });
         }
       }
-      ranges.sort((a, b) => a.s - b.s);
+      ranges.sort((x, y) => x.s - y.s);
     }
     let html = "", i = 0;
     for (const r of ranges) {
@@ -156,8 +278,7 @@
       html += `<img class="emote" alt="${name}" src="https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(r.id)}/default/dark/2.0">`;
       i = r.e + 1;
     }
-    html += escapeHtml(chars.slice(i).join(""));
-    return html;
+    return html + escapeHtml(chars.slice(i).join(""));
   }
 
   const badgeLabels = { broadcaster: "★", moderator: "MOD", vip: "VIP", subscriber: "SUB" };
@@ -180,7 +301,6 @@
   }
 
   function addChatMessage({ name, color, badges, text, emotes, userId, msgId, action, highlight }) {
-    if (!cfg.chat.enabled) return;
     const el = document.createElement("div");
     el.className = "msg" + (action ? " action" : "") + (highlight ? " highlight" : "");
     el.dataset.user = userId || "";
@@ -193,7 +313,6 @@
   }
 
   function addSystemMessage(text) {
-    if (!cfg.chat.enabled) return;
     const el = document.createElement("div");
     el.className = "msg system";
     el.textContent = text;
@@ -212,13 +331,10 @@
     const badges = t.badges || "";
     const isMod = /(^|,)(broadcaster|moderator)\//.test(badges);
 
-    // Test-Befehle für Streamer/Mods
     if (isMod && /^!testfollow\b/i.test(text)) {
-      const who = text.split(/\s+/)[1] || "TestFollower" + Math.floor(Math.random() * 1000);
-      queueAlert(who);
+      queueAlert(text.split(/\s+/)[1] || "TestFollower" + Math.floor(Math.random() * 1000));
       return;
     }
-
     if (hideUsers.has(login.toLowerCase())) return;
     if (cfg.chat.hideCommands && text.startsWith("!")) return;
 
@@ -230,8 +346,9 @@
   }
 
   function connectChat() {
-    if (!cfg.channel || cfg.channel === "dein_kanalname") {
-      showError("Kein Kanal gesetzt – trage deinen Kanalnamen in config.js ein.");
+    const channel = (cfg.channel || "").trim().toLowerCase().replace(/^#/, "");
+    if (!channel || channel === "dein_kanalname") {
+      showError("Kein Kanal gesetzt – trage deinen Kanalnamen in config.js ein (oder im Editor).");
       return;
     }
     const status = $("chat-status");
@@ -242,7 +359,7 @@
       ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
       ws.send("PASS SCHMOOPIIE");
       ws.send("NICK justinfan" + Math.floor(10000 + Math.random() * 80000));
-      ws.send("JOIN #" + cfg.channel);
+      ws.send("JOIN #" + channel);
       pingTimer = setInterval(() => ws.readyState === 1 && ws.send("PING :tmi.twitch.tv"), 240000);
     };
 
@@ -252,8 +369,8 @@
         const m = parseIrc(line);
         switch (m.command) {
           case "PING": ws.send("PONG :" + (m.params[0] || "tmi.twitch.tv")); break;
-          case "JOIN": status && status.classList.add("online"); break;
-          case "ROOMSTATE": status && status.classList.add("online"); break;
+          case "JOIN":
+          case "ROOMSTATE": status.classList.add("online"); break;
           case "PRIVMSG": handlePrivmsg(m); break;
           case "USERNOTICE": {
             const sys = m.tags["system-msg"];
@@ -263,14 +380,12 @@
           }
           case "CLEARCHAT": {
             const target = m.tags["target-user-id"];
-            for (const el of [...chatBox.children]) {
-              if (!target || el.dataset.user === target) el.remove();
-            }
+            for (const el of [...chatBox.children]) if (!target || el.dataset.user === target) el.remove();
             break;
           }
           case "CLEARMSG": {
             const id = m.tags["target-msg-id"];
-            for (const el of chatBox.querySelectorAll(".msg")) if (el.dataset.id === id) el.remove();
+            for (const el of [...chatBox.children]) if (el.dataset.id === id) el.remove();
             break;
           }
           case "RECONNECT": ws.close(); break;
@@ -280,17 +395,25 @@
 
     ws.onclose = () => {
       clearInterval(pingTimer);
-      status && status.classList.remove("online");
+      status.classList.remove("online");
       setTimeout(connectChat, 3000);
     };
   }
 
-  // -------------------------------------------------------------------
+  // ===================================================================
   // FOLLOW-ALERT
-  // -------------------------------------------------------------------
+  // ===================================================================
   const alertQueue = [];
   let alertBusy = false;
-  const alertEl = $("alert");
+  let alertPinned = false; // Editor: Alert dauerhaft zeigen
+
+  function setAlertPinned(on) {
+    alertPinned = on;
+    if (!alertBusy) {
+      alertEl.classList.toggle("pinned", on);
+      if (on) fillAlert("BeispielName");
+    }
+  }
 
   function queueAlert(name) {
     alertQueue.push(name);
@@ -299,15 +422,17 @@
 
   function nextAlert() {
     const name = alertQueue.shift();
-    if (!name) { alertBusy = false; return; }
+    if (!name) {
+      alertBusy = false;
+      if (alertPinned) setAlertPinned(true);
+      return;
+    }
     alertBusy = true;
-    $("alert-name").textContent = name;
-    $("alert-sub").textContent = cfg.alert.text;
-    alertEl.classList.remove("hide");
-    // Animation neu starten
-    void alertEl.offsetWidth;
+    alertEl.classList.remove("pinned", "hide", "show");
+    fillAlert(name);
+    void alertEl.offsetWidth; // Animation neu starten
     alertEl.classList.add("show");
-    confetti();
+    if (cfg.alert.confetti) confetti();
     playSound();
     setTimeout(() => {
       alertEl.classList.add("hide");
@@ -324,10 +449,10 @@
     const colors = [cfg.theme.accent, cfg.theme.accent2, "#ffffff", "#ffd000", "#ff4a80"];
     for (let i = 0; i < 60; i++) {
       const p = document.createElement("i");
-      const angle = Math.random() * Math.PI * 2;
+      const ang = Math.random() * Math.PI * 2;
       const dist = 220 + Math.random() * 380;
-      p.style.setProperty("--dx", Math.cos(angle) * dist + "px");
-      p.style.setProperty("--dy", Math.sin(angle) * dist * 0.6 + 120 + "px");
+      p.style.setProperty("--dx", Math.cos(ang) * dist + "px");
+      p.style.setProperty("--dy", Math.sin(ang) * dist * 0.6 + 120 + "px");
       p.style.setProperty("--rot", (Math.random() * 720 - 360) + "deg");
       p.style.background = colors[i % colors.length];
       p.style.animationDelay = Math.random() * 0.2 + "s";
@@ -341,15 +466,14 @@
     if (!cfg.alert.sound) return;
     try {
       if (cfg.alert.soundFile) {
-        const a = new Audio(cfg.alert.soundFile);
-        a.volume = cfg.alert.volume;
-        a.play().catch(() => {});
+        const au = new Audio(cfg.alert.soundFile);
+        au.volume = cfg.alert.volume;
+        au.play().catch(() => {});
         return;
       }
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
       const now = audioCtx.currentTime;
-      const notes = [659.25, 783.99, 987.77, 1318.51]; // E5 G5 B5 E6
-      notes.forEach((f, i) => {
+      [659.25, 783.99, 987.77, 1318.51].forEach((f, i) => {
         const o = audioCtx.createOscillator();
         const g = audioCtx.createGain();
         o.type = "triangle";
@@ -365,20 +489,20 @@
     } catch (e) { /* Sound ist optional */ }
   }
 
-  // -------------------------------------------------------------------
+  // ===================================================================
   // FOLLOWS über Twitch EventSub (WebSocket)
-  // -------------------------------------------------------------------
+  // ===================================================================
   const seenFollowers = new Set();
   const seenMessages = new Set();
+  const token = () => (cfg.accessToken || "").trim().replace(/^oauth:/i, "");
 
   async function helix(path, opts = {}) {
     const res = await fetch("https://api.twitch.tv/helix/" + path, {
       ...opts,
       headers: {
-        "Authorization": "Bearer " + cfg.accessToken,
+        "Authorization": "Bearer " + token(),
         "Client-Id": cfg.clientId,
         "Content-Type": "application/json",
-        ...(opts.headers || {}),
       },
     });
     const body = await res.json().catch(() => ({}));
@@ -387,14 +511,14 @@
   }
 
   async function startFollowAlerts() {
-    if (!cfg.accessToken) {
-      console.info("[Overlay] Kein accessToken gesetzt – Follow-Alerts deaktiviert (nur Test-Alerts).");
+    if (!token()) {
+      console.info("[Overlay] Kein accessToken – Follow-Alerts aus (nur Test-Alerts).");
       return;
     }
     let me;
     try {
       const res = await fetch("https://id.twitch.tv/oauth2/validate", {
-        headers: { Authorization: "OAuth " + cfg.accessToken },
+        headers: { Authorization: "OAuth " + token() },
       });
       if (!res.ok) throw new Error("Token ungültig oder abgelaufen");
       me = await res.json();
@@ -407,15 +531,14 @@
       showError("Token fehlt der Scope 'moderator:read:followers' – Follow-Alerts gehen nicht.");
       return;
     }
-
+    const channel = (cfg.channel || "").trim().toLowerCase().replace(/^#/, "");
     let broadcasterId = me.user_id;
-    if (cfg.channel && cfg.channel !== me.login) {
+    if (channel && channel !== me.login) {
       try {
-        const u = await helix("users?login=" + encodeURIComponent(cfg.channel));
+        const u = await helix("users?login=" + encodeURIComponent(channel));
         if (u.data && u.data[0]) broadcasterId = u.data[0].id;
       } catch (e) { showError("Kanal nicht gefunden: " + e.message); return; }
     }
-
     connectEventSub("wss://eventsub.wss.twitch.tv/ws", { broadcasterId, moderatorId: me.user_id });
   }
 
@@ -427,10 +550,7 @@
 
     const armWatchdog = () => {
       clearTimeout(watchdog);
-      watchdog = setTimeout(() => {
-        console.warn("[Overlay] EventSub keepalive verpasst – verbinde neu");
-        ws.close();
-      }, keepaliveMs + 5000);
+      watchdog = setTimeout(() => ws.close(), keepaliveMs + 5000);
     };
 
     ws.onmessage = async (ev) => {
@@ -447,12 +567,7 @@
           const session = msg.payload.session;
           keepaliveMs = (session.keepalive_timeout_seconds || 10) * 1000;
           armWatchdog();
-          if (oldSocket) {
-            // Reconnect: Abos werden übernommen, alte Verbindung schließen
-            oldSocket.__replaced = true;
-            oldSocket.close();
-            return;
-          }
+          if (oldSocket) { oldSocket.__replaced = true; oldSocket.close(); return; }
           try {
             await helix("eventsub/subscriptions", {
               method: "POST",
@@ -470,9 +585,7 @@
           }
           break;
         }
-        case "session_keepalive":
-          break;
-        case "notification": {
+        case "notification":
           if (msg.payload.subscription.type === "channel.follow") {
             const e = msg.payload.event;
             if (seenFollowers.has(e.user_id)) return; // Follow/Unfollow-Spam ignorieren
@@ -480,7 +593,6 @@
             queueAlert(e.user_name || e.user_login);
           }
           break;
-        }
         case "session_reconnect":
           replaced = true;
           connectEventSub(msg.payload.session.reconnect_url, ids, ws);
@@ -494,41 +606,57 @@
     ws.onclose = () => {
       clearTimeout(watchdog);
       if (ws.__replaced || replaced) return;
-      // Verbindung verloren -> komplett neu verbinden & neu abonnieren
       setTimeout(() => connectEventSub("wss://eventsub.wss.twitch.tv/ws", ids), 5000);
     };
   }
 
-  // -------------------------------------------------------------------
-  // Test-Möglichkeiten
-  //   - URL-Parameter ?test=1  -> Demo-Chat + Test-Follow
-  //   - Taste "F" (OBS: Rechtsklick > Interagieren) -> Test-Follow
-  //   - Chat-Befehl "!testfollow [name]" (Streamer/Mods)
-  // -------------------------------------------------------------------
+  // ===================================================================
+  // Demo-Nachrichten (Test- und Editor-Modus)
+  // ===================================================================
+  const DEMO = [
+    { name: "Streamer", color: "#9146FF", badges: "broadcaster/1", text: "Willkommen im Stream! 👋" },
+    { name: "PixelPanda", color: "#00C8FF", badges: "subscriber/12", text: "Hype! Endlich wieder live 🔥" },
+    { name: "ModMaxi", color: "#3DDC84", badges: "moderator/1", text: "Denkt an die Chatregeln, viel Spaß!" },
+    { name: "nightowl_99", color: "", badges: "", text: "Die Handcam ist richtig nice 😄" },
+    { name: "VIPVanessa", color: "#FF5CF4", badges: "vip/1", text: "GG! Kappa", emotes: "25:4-8" },
+    { name: "LaraLurkt", color: "#FFD000", badges: "subscriber/3", text: "Wie heißt der Song gerade?" },
+  ];
+  let demoIdx = 0;
+  const demoMessage = () => addChatMessage(DEMO[demoIdx++ % DEMO.length]);
+
+  // ===================================================================
+  // Tests
+  //   ?test=1                 -> Demo-Chat + Test-Follow
+  //   Taste "F"               -> Test-Follow (OBS: Rechtsklick > Interagieren)
+  //   !testfollow [name]      -> im Chat (Streamer/Mods)
+  // ===================================================================
   window.testFollow = (name = "TestFollower") => queueAlert(name);
   document.addEventListener("keydown", (e) => {
+    if (EDIT && e.target.closest && e.target.closest("input, select, textarea")) return;
     if (e.key === "f" || e.key === "F") queueAlert("TestFollower" + Math.floor(Math.random() * 1000));
   });
 
-  function runDemo() {
-    const demo = [
-      { name: cfg.channel || "Streamer", color: "#9146FF", badges: "broadcaster/1", text: "Willkommen im Stream! 👋" },
-      { name: "PixelPanda", color: "#00C8FF", badges: "subscriber/12", text: "Hype! Endlich wieder live 🔥" },
-      { name: "ModMaxi", color: "#3DDC84", badges: "moderator/1", text: "Denkt an die Chatregeln, viel Spaß!" },
-      { name: "nightowl_99", color: "", badges: "", text: "Die Handcam ist richtig nice 😄" },
-      { name: "VIPVanessa", color: "#FF5CF4", badges: "vip/1", text: "GG! Kappa", emotes: "25:4-8" },
-    ];
-    demo.forEach((d, i) => setTimeout(() => addChatMessage(d), 400 + i * 700));
-    setTimeout(() => queueAlert("NeuerFollower"), 2500);
-  }
+  // API für den Editor
+  window.Overlay = {
+    cfg, DEFAULTS, merge, render, queueAlert, demoMessage, setAlertPinned,
+    clearChat: () => { chatBox.innerHTML = ""; },
+  };
 
-  // -------------------------------------------------------------------
-  // Start
-  // -------------------------------------------------------------------
-  if (params.has("test")) {
-    runDemo();
+  render();
+
+  if (EDIT) {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "editor.css";
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = "editor.js";
+    document.body.appendChild(js);
+  } else if (TEST) {
+    DEMO.forEach((_, i) => setTimeout(demoMessage, 400 + i * 700));
+    setTimeout(() => queueAlert("NeuerFollower"), 2500);
   } else {
-    connectChat();
+    if (cfg.chat.enabled) connectChat();
     startFollowAlerts();
   }
 })();
